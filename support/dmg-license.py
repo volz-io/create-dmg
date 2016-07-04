@@ -27,8 +27,8 @@ THE SOFTWARE.
 import os
 import sys
 import tempfile
-import optparse
-
+import argparse
+from pipes import quote
 
 class Path(str):
     def __enter__(self):
@@ -44,8 +44,10 @@ def mktemp(dir=None, suffix=''):
     return Path(filename)
 
 
-def main(options, args):
-    dmgFile, license = args
+def main(args):
+    dmgFile = args.dmg[0]
+    license = args.eula[0]
+    
     with mktemp('.') as tmpFile:
         with open(tmpFile, 'w') as f:
             f.write("""data 'TMPL' (128, "LPic") {
@@ -97,11 +99,12 @@ data 'STR#' (5002, "English") {
                     return s.strip().replace('\\', '\\\\').replace('"', '\\"')
 
                 for line in l:
-                    if len(line) < 1000:
+                    if len(line) < 256:
                         f.write('    "' + escape(line) + '\\n"\n')
                     else:
-                        for liner in line.split('.'):
-                            f.write('    "' + escape(liner) + '. \\n"\n')
+                        for liner in [line[i:i+256] for i in range(0, len(line), 256)]:
+                            f.write('    "' + escape(liner) + '"\n')
+                        f.write('    "\\n"\n')
                 f.write('};\n\n')
             f.write("""data 'styl' (5000, "English") {
         $"0003 0000 0000 000C 0009 0014 0000 0000"
@@ -109,55 +112,50 @@ data 'STR#' (5002, "English") {
         $"0100 0000 0000 0000 0000 0000 002A 000C"
         $"0009 0014 0000 0000 0000 0000 0000"
 };\n""")
-        os.system('hdiutil unflatten -quiet "%s"' % dmgFile)
-        ret = os.system('%s -a %s -o "%s"' %
-                        (options.rez, tmpFile, dmgFile))
-        os.system('hdiutil flatten -quiet "%s"' % dmgFile)
-        if options.compression is not None:
-            os.system('cp %s %s.temp.dmg' % (dmgFile, dmgFile))
+        
+        os.system('hdiutil unflatten -quiet %s' % quote(dmgFile))
+        ret = os.system('%s -a %s -o %s' %
+                        (quote(args.rez), quote(tmpFile), quote(dmgFile)))
+        os.system('hdiutil flatten -quiet %s' % quote(dmgFile))
+        if args.compression is not None:
+            os.system('cp %s %s.temp.dmg' % (quote(dmgFile), quote(dmgFile)))
             os.remove(dmgFile)
-            if options.compression == "bz2":
+            if args.compression == "bz2":
                 os.system('hdiutil convert %s.temp.dmg -format UDBZ -o %s' %
-                          (dmgFile, dmgFile))
-            elif options.compression == "gz":
-                os.system('hdiutil convert %s.temp.dmg -format ' % dmgFile +
-                          'UDZO -imagekey zlib-devel=9 -o %s' % dmgFile)
-            os.remove('%s.temp.dmg' % dmgFile)
+                          (quote(dmgFile), quote(dmgFile)))
+            elif args.compression == "gz":
+                os.system('hdiutil convert %s.temp.dmg -format ' % quote(dmgFile) +
+                          'UDZO -imagekey zlib-devel=9 -o %s' % quote(dmgFile))
+            os.remove('%s.temp.dmg' % quote(dmgFile))
     if ret == 0:
         print "Successfully added license to '%s'" % dmgFile
     else:
         print "Failed to add license to '%s'" % dmgFile
 
 if __name__ == '__main__':
-    parser = optparse.OptionParser()
-    parser.set_usage("""%prog <dmgFile> <licenseFile> [OPTIONS]
-  This program adds a software license agreement to a DMG file.
-  It requires Xcode and either a plain ascii text <licenseFile>
-  or a <licenseFile.rtf> with the RTF contents.
+    parser = argparse.ArgumentParser(description = 'This program adds a software license agreement to a DMG file. It requires Xcode and either a plain ascii text <licenseFile> or a <licenseFile.rtf> with the RTF contents.')
 
-  See --help for more details.""")
-    parser.add_option(
-        '--rez',
-        '-r',
+    parser.add_argument('dmg', nargs ='+', action = 'store')
+    parser.add_argument('eula', nargs ='+', action = 'store')
+
+    parser.add_argument(
+        '-r', '--rez',
+        dest='rez',
         action='store',
         default='/Applications/Xcode.app/Contents/Developer/Tools/Rez',
         help='The path to the Rez tool. Defaults to %default'
     )
-    parser.add_option(
-        '--compression',
-        '-c',
+    
+    parser.add_argument(
+        '-c', '--compression',
+        dest='compression',
         action='store',
         choices=['bz2', 'gz'],
         default=None,
         help='Optionally compress dmg using specified compression type. '
              'Choices are bz2 and gz.'
     )
-    options, args = parser.parse_args()
-    cond = len(args) != 2
-    if not os.path.exists(options.rez):
-        print 'Failed to find Rez at "%s"!\n' % options.rez
-        cond = True
-    if cond:
-        parser.print_usage()
-        sys.exit(1)
-    main(options, args)
+    
+    args = parser.parse_args()
+    
+    main(args)
